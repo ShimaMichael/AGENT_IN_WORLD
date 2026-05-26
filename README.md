@@ -82,5 +82,3 @@ OPEN_DOOR
 SCAN_AREA
 WAIT
 ```
-
-This keeps the action space interpretable and makes it straightforward to connect an LLM provider later.
