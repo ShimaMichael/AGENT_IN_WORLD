@@ -1,17 +1,18 @@
 import argparse
 import os
+import time
 
-import memory
-import planner
-import dataclasses
-import memory
+from gridworld import GridWorld
+from memory import Memory
+from planner import LocalPolicy, Planner, ReflectionEngine
+from project_dataclasses import Action, ActionResult, Observation, Plan
 
 def clear_terminal(enabled: bool) -> None:
     if enabled:
         os.system("cls" if os.name == "nt" else "clear")
 
 
-def summarize_observation(observation: memory.Observation) -> list[str]:
+def summarize_observation(observation: Observation) -> list[str]:
     interesting = [
         tile
         for tile in observation.visible_tiles
@@ -24,23 +25,23 @@ def summarize_observation(observation: memory.Observation) -> list[str]:
         for tile in interesting
     ]
 
-def format_memory(memory: memory.Memory) -> list[str]:
-    beliefs = ", ".join(f"{name}@{pos}" for name, pos in sorted(memory.object_beliefs.items()))
+def format_memory(agent_memory: Memory) -> list[str]:
+    beliefs = ", ".join(f"{name}@{pos}" for name, pos in sorted(agent_memory.object_beliefs.items()))
     if not beliefs:
         beliefs = "none yet"
     return [
-        f"Known tiles: {len(memory.known_world)} | Explored positions: {len(memory.explored)}",
+        f"Known tiles: {len(agent_memory.known_world)} | Explored positions: {len(agent_memory.explored)}",
         f"Object beliefs: {beliefs}",
     ]
 
 
 def render_turn(
-    world: memory.GridWorld,
-    memory: memory.Memory,
-    observation: memory.Observation,
-    plan: memory.Plan,
+    world: GridWorld,
+    memory: Memory,
+    observation: Observation,
+    plan: Plan,
     decision: dict[str, str],
-    result: memory.ActionResult,
+    result: ActionResult,
     reflection: str | None,
     debug_full_map: bool,
 ) -> str:
@@ -82,12 +83,59 @@ def render_turn(
     return "\n".join(sections)
 
 
-def execute_decision(world: memory.GridWorld, decision: dict[str, str]) -> tuple[memory.Action | None, memory.ActionResult]:
+def execute_decision(world: GridWorld, decision: dict[str, str]) -> tuple[Action | None, ActionResult]:
     try:
-        action = memory.Action(decision["action"])
+        action = Action(decision["action"])
     except (KeyError, ValueError):
-        return None, memory.ActionResult(False, f"Invalid action emitted: {decision.get('action')!r}")
+        return None, ActionResult(False, f"Invalid action emitted: {decision.get('action')!r}")
     return action, world.step(action)
+
+
+def run_demo(max_turns: int, delay: float, debug_full_map: bool, no_clear: bool) -> bool:
+    world = GridWorld()
+    agent_memory = Memory()
+    agent_planner = Planner()
+    policy = LocalPolicy()
+    reflection_engine = ReflectionEngine()
+
+    final_result = ActionResult(False, "Maximum turns reached.")
+    for _ in range(max_turns):
+        observation = world.observe()
+        agent_memory.update_from_observation(observation)
+        plan = agent_planner.make_plan(observation, agent_memory)
+        decision = policy.decide(observation, agent_memory, plan)
+        action, result = execute_decision(world, decision)
+        if action is not None:
+            agent_memory.record_action(action, result)
+        reflection = reflection_engine.reflect(agent_memory, result)
+        if reflection:
+            agent_memory.add_reflection(reflection)
+
+        clear_terminal(not no_clear)
+        print(
+            render_turn(
+                world=world,
+                memory=agent_memory,
+                observation=observation,
+                plan=plan,
+                decision=decision,
+                result=result,
+                reflection=reflection,
+                debug_full_map=debug_full_map,
+            )
+        )
+        final_result = result
+        if result.done:
+            break
+        if delay > 0:
+            time.sleep(delay)
+
+    print("\nFinal reflections:")
+    for item in agent_memory.reflections or ["No major strategic corrections were needed."]:
+        print(f"- {item}")
+    print(f"\nOutcome: {final_result.message}")
+    return final_result.success and final_result.done
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Cognitive Gridworld terminal demo.")

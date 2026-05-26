@@ -1,5 +1,9 @@
+from __future__ import annotations
+
 from enum import Enum
 from dataclasses import dataclass
+
+Position = tuple[int, int]
 
 
 class Action(str, Enum):

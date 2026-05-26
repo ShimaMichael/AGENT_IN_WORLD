@@ -1,3 +1,14 @@
+from __future__ import annotations
+
+import random
+from typing import TYPE_CHECKING
+
+from project_dataclasses import Action, ActionResult, MOVE_DELTAS, Observation, Position, VisibleTile
+
+if TYPE_CHECKING:
+    from memory import Memory
+
+
 class GridWorld:
     """Partially observable research-facility gridworld."""
 

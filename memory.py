@@ -1,4 +1,10 @@
+from __future__ import annotations
+
+from collections import deque
 from dataclasses import dataclass, field
+from typing import Deque
+
+from project_dataclasses import Action, ActionResult, Observation, Position
 
 @dataclass
 class Memory:
