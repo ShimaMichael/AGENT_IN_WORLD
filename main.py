@@ -4,7 +4,7 @@ import time
 
 from gridworld import GridWorld
 from memory import Memory
-from planner import LocalPolicy, Planner, ReflectionEngine
+from planner import LLMPolicy, LocalPolicy, Planner, ReflectionEngine
 from project_dataclasses import Action, ActionResult, Observation, Plan
 
 def clear_terminal(enabled: bool) -> None:
@@ -91,11 +91,18 @@ def execute_decision(world: GridWorld, decision: dict[str, str]) -> tuple[Action
     return action, world.step(action)
 
 
-def run_demo(max_turns: int, delay: float, debug_full_map: bool, no_clear: bool) -> bool:
+def run_demo(
+    max_turns: int,
+    delay: float,
+    debug_full_map: bool,
+    no_clear: bool,
+    policy_name: str,
+    gemini_model: str | None,
+) -> bool:
     world = GridWorld()
     agent_memory = Memory()
     agent_planner = Planner()
-    policy = LocalPolicy()
+    policy = LLMPolicy(model=gemini_model) if policy_name == "gemini" else LocalPolicy()
     reflection_engine = ReflectionEngine()
 
     final_result = ActionResult(False, "Maximum turns reached.")
@@ -143,16 +150,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--delay", type=float, default=0.15, help="Delay between turns in seconds.")
     parser.add_argument("--debug-full-map", action="store_true", help="Render the true full map.")
     parser.add_argument("--no-clear", action="store_true", help="Do not clear the terminal each turn.")
+    parser.add_argument(
+        "--policy",
+        choices=["gemini", "local"],
+        default="gemini",
+        help="Decision policy to use. Gemini requires GEMINI_API_KEY.",
+    )
+    parser.add_argument(
+        "--gemini-model",
+        default=None,
+        help="Gemini model for --policy gemini. Defaults to GEMINI_MODEL or gemini-3.5-flash.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.policy == "gemini" and not os.environ.get("GEMINI_API_KEY"):
+        raise SystemExit("GEMINI_API_KEY is required for --policy gemini. Use --policy local for offline runs.")
     success = run_demo(
         max_turns=args.max_turns,
         delay=args.delay,
         debug_full_map=args.debug_full_map,
         no_clear=args.no_clear,
+        policy_name=args.policy,
+        gemini_model=args.gemini_model,
     )
     raise SystemExit(0 if success else 1)
 

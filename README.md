@@ -39,6 +39,7 @@ The agent must explore, locate the keycard, unlock the door, and escape through 
 ## Run
 
 ```bash
+export GEMINI_API_KEY="your-api-key"
 python3 main.py
 ```
 
@@ -48,7 +49,12 @@ Useful options:
 python3 main.py --no-clear --delay 0
 python3 main.py --debug-full-map
 python3 main.py --max-turns 80
+python3 main.py --policy local
+python3 main.py --gemini-model gemini-3.5-flash
 ```
+
+The default policy is `gemini`, which calls the Gemini API through the `GEMINI_API_KEY`
+environment variable. For a deterministic offline run, use `--policy local`.
 
 ## Project Structure
 

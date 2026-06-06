@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
+import urllib.error
+import urllib.request
 from collections import Counter, deque
+from dataclasses import asdict
 from typing import Deque, Iterable
 
 from memory import Memory
@@ -198,9 +203,123 @@ class LocalPolicy:
 
 
 class LLMPolicy:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        timeout: float = 20.0,
+    ) -> None:
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is required when using the Gemini LLM policy.")
+        self.model = model or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+        self.timeout = timeout
 
     def decide(self, observation: Observation, memory: Memory, plan: Plan) -> dict[str, str]:
-        raise NotImplementedError(
-            "LLMPolicy is intentionally a stub. Implement provider calls here while preserving "
-            "the structured decision shape: current_goal, reasoning, action."
+        prompt = self._build_prompt(observation, memory, plan)
+        response = self._generate(prompt)
+        decision = self._parse_decision(response)
+        action = self._validate_action(decision.get("action"))
+        return {
+            "current_goal": str(decision.get("current_goal") or plan.current_goal),
+            "reasoning": str(decision.get("reasoning") or "Gemini selected a valid action."),
+            "action": action.value,
+        }
+
+    def _build_prompt(self, observation: Observation, memory: Memory, plan: Plan) -> str:
+        payload = {
+            "task": (
+                "Choose exactly one next action for a partially observable gridworld agent. "
+                "Return JSON only, with keys current_goal, reasoning, and action."
+            ),
+            "rules": {
+                "valid_actions": [action.value for action in Action],
+                "objective": "Find the keycard, unlock the locked door, and reach the exit.",
+                "movement": "Walls and locked doors block movement. OPEN_DOOR only works next to the door with the keycard.",
+            },
+            "plan": asdict(plan),
+            "observation": {
+                "turn": observation.turn,
+                "position": observation.position,
+                "inventory": sorted(observation.inventory),
+                "energy": observation.energy,
+                "visible_tiles": [asdict(tile) for tile in observation.visible_tiles],
+                "messages": observation.messages,
+            },
+            "memory": {
+                "known_world": self._stringify_positions(memory.known_world),
+                "object_beliefs": self._stringify_positions(memory.object_beliefs),
+                "hypotheses": memory.hypotheses[-5:],
+                "reflections": memory.reflections[-5:],
+                "failed_attempts": memory.failed_attempts[-6:],
+                "recent_positions": list(memory.recent_positions),
+                "recent_actions": [action.value for action in memory.recent_actions],
+            },
+            "json_schema": {
+                "current_goal": "short description of the current goal",
+                "reasoning": "one concise sentence explaining the action choice",
+                "action": "one valid action string",
+            },
+        }
+        return json.dumps(payload, separators=(",", ":"))
+
+    def _generate(self, prompt: str) -> str:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        body = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+            },
+        }
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
+            method="POST",
         )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            message = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Gemini API request failed with HTTP {error.code}: {message}") from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Gemini API request failed: {error.reason}") from error
+
+        candidates = data.get("candidates") or []
+        if not candidates:
+            raise RuntimeError(f"Gemini API returned no candidates: {data}")
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text_parts = [part.get("text", "") for part in parts if "text" in part]
+        response_text = "".join(text_parts).strip()
+        if not response_text:
+            raise RuntimeError(f"Gemini API returned no text content: {data}")
+        return response_text
+
+    def _parse_decision(self, response_text: str) -> dict[str, str]:
+        try:
+            decision = json.loads(response_text)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Gemini returned invalid JSON: {response_text}") from error
+        if not isinstance(decision, dict):
+            raise RuntimeError(f"Gemini decision must be a JSON object: {response_text}")
+        return decision
+
+    def _validate_action(self, action: object) -> Action:
+        try:
+            return Action(str(action))
+        except ValueError as error:
+            valid = ", ".join(action.value for action in Action)
+            raise RuntimeError(f"Gemini emitted invalid action {action!r}. Valid actions: {valid}") from error
+
+    def _stringify_positions(self, values: dict[Position, str] | dict[str, Position]) -> dict[str, object]:
+        return {str(key): value for key, value in values.items()}
